@@ -70,11 +70,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.addJavascriptInterface(AndroidBridge(webView, ::getMediaController), "AndroidBridge")
+        // Mengirimkan lambda langsung agar tidak bentrok nama method dengan AppCompatActivity
+        webView.addJavascriptInterface(AndroidBridge(webView) { mediaController }, "AndroidBridge")
         webView.loadUrl("file:///android_asset/index.html")
     }
-
-    private fun getMediaController(): MediaController? = mediaController
 
     private fun initNewPipeExtractor() {
         try {
@@ -90,6 +89,17 @@ class MainActivity : AppCompatActivity() {
         controllerFuture?.addListener({
             mediaController = controllerFuture?.get()
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun getFileName(uri: Uri): String {
+        var result = "Lagu Lokal"
+        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index != -1) result = cursor.getString(index)
+            }
+        }
+        return result
     }
 }
 
@@ -224,7 +234,6 @@ class AndroidBridge(
                 val audioUrl = audioStream?.url ?: ""
 
                 if (audioUrl.isNotEmpty()) {
-                    // Mengirim Objek JSON Lengkap (Audio URL, Judul, Uploader, Thumbnail)
                     val jsonResult = JSONObject().apply {
                         put("audioUrl", audioUrl)
                         put("title", streamExtractor.name ?: "YouTube Audio")
