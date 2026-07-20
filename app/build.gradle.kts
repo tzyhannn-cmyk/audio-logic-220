@@ -34,6 +34,6 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.3.1")
     implementation("androidx.media3:media3-session:1.3.1")
 
-    // NewPipe Extractor
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.27.0")
+    // NewPipe Extractor (Menggunakan versi stabil terbaru yang ada di server)
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.26.3")
 }
