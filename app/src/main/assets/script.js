@@ -96,10 +96,12 @@ function onLocalFileSelected(uri, name) {
 
 function onSearchFailed(error) {
     document.getElementById("loadingContainer").style.display = "none";
-    alert("Pencarian Gagal: " + error);
+    // Tambahkan alert ini untuk mendeteksi error-nya apa
+    alert("Pencarian Gagal dari Android: " + error); 
 }
 
 function onExtractionFailed(error) {
     document.getElementById("loadingContainer").style.display = "none";
-    alert("Ekstraksi Gagal: " + error);
+    // Tambahkan alert ini untuk mendeteksi error-nya apa
+    alert("Ekstraksi Gagal dari Android: " + error);
 }
