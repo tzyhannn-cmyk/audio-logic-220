@@ -36,3 +36,4 @@ dependencies {
 
     // NewPipe Extractor
     implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.27.0")
+}
