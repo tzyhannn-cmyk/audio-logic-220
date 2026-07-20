@@ -170,7 +170,8 @@ class AndroidBridge(private val webView: WebView) {
                         obj.put("url", item.url)
                         obj.put("uploader", item.uploaderName)
                         obj.put("duration", item.duration)
-                        obj.put("thumbnail", item.thumbnailUrl)
+                        // Mengambil URL thumbnail pertama dari list thumbnails
+                        obj.put("thumbnail", item.thumbnails?.firstOrNull()?.url ?: "")
                         jsonArray.put(obj)
                     }
                 }
