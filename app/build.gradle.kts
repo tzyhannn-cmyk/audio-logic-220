@@ -35,6 +35,4 @@ dependencies {
     implementation("androidx.media3:media3-session:1.3.1")
 
     // NewPipe Extractor
-    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.4")
-}
-
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.27.0")
