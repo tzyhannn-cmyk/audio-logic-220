@@ -21,9 +21,11 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # Menggunakan aksi Gradle bawaan GitHub (tidak butuh berkas gradlew)
+    # Mengunci Gradle ke versi 8.5 agar cocok dengan Android Plugin 8.2.2
     - name: 3. Setup Gradle
       uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.5'
 
     - name: 4. Build Debug APK with Gradle
       run: gradle assembleDebug --stacktrace
