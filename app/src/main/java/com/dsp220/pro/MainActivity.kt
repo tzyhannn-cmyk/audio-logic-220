@@ -22,6 +22,10 @@ import kotlinx.coroutines.launch
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.downloader.Downloader
+import org.schabi.newpipe.extractor.downloader.Request
+import org.schabi.newpipe.extractor.downloader.Response
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
 
@@ -50,17 +54,14 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = WebChromeClient()
 
-        // 1. Mendaftarkan jembatan JavaScript dan mengirimkan instance webView ke AndroidBridge
         webView.addJavascriptInterface(AndroidBridge(webView), "AndroidBridge")
-
-        // Memuat file HTML kamu
         webView.loadUrl("file:///android_asset/index.html")
     }
 
     private fun initNewPipeExtractor() {
         try {
-            // Inisialisasi dasar NewPipe Extractor
-            NewPipe.init(Downloader.getInstance())
+            // Menggunakan AppDownloader kustom agar tidak error getInstance
+            NewPipe.init(AppDownloader())
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -86,7 +87,26 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// 2. Kelas AndroidBridge yang aman (menggunakan Handler Main Looper agar WebView tidak macet)
+// Class Downloader khusus untuk menangani request HTTP ke YouTube
+class AppDownloader : Downloader() {
+    override fun execute(request: Request): Response {
+        val url = URL(request.url())
+        val connection = url.openConnection() as HttpURLConnection
+        connection.requestMethod = request.httpMethod()
+
+        request.headers().forEach { (key, values) ->
+            values.forEach { value -> connection.addRequestProperty(key, value) }
+        }
+
+        val responseCode = connection.responseCode
+        val responseMessage = connection.responseMessage ?: ""
+        val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
+        val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: ""
+
+        return Response(responseCode, responseMessage, connection.headerFields, responseBody, request.url())
+    }
+}
+
 class AndroidBridge(private val webView: WebView) {
 
     @JavascriptInterface
@@ -96,13 +116,11 @@ class AndroidBridge(private val webView: WebView) {
                 val searchExtractor = ServiceList.YouTube.getSearchExtractor(query)
                 searchExtractor.fetchPage()
 
-                // Kirim hasil balik ke JavaScript di Main Thread
                 Handler(Looper.getMainLooper()).post {
                     webView.evaluateJavascript("onSearchSuccess('$query')", null)
                 }
             } catch (e: Exception) {
                 val errorMsg = e.localizedMessage?.replace("'", "\\'") ?: "Pencarian gagal"
-                // Kirim error balik ke JavaScript di Main Thread
                 Handler(Looper.getMainLooper()).post {
                     webView.evaluateJavascript("onSearchFailed('$errorMsg')", null)
                 }
@@ -119,13 +137,11 @@ class AndroidBridge(private val webView: WebView) {
 
                 val audioUrl = streamExtractor.audioStreams.firstOrNull()?.url ?: ""
 
-                // Kirim hasil ekstraksi audio balik ke JavaScript di Main Thread
                 Handler(Looper.getMainLooper()).post {
                     webView.evaluateJavascript("onExtractionSuccess('$audioUrl')", null)
                 }
             } catch (e: Exception) {
                 val errorMsg = e.localizedMessage?.replace("'", "\\'") ?: "Ekstraksi gagal"
-                // Kirim error ekstraksi balik ke JavaScript di Main Thread
                 Handler(Looper.getMainLooper()).post {
                     webView.evaluateJavascript("onExtractionFailed('$errorMsg')", null)
                 }
