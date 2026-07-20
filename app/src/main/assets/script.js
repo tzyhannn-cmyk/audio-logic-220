@@ -28,6 +28,12 @@ function switchTab(tabId, el) {
     }
 }
 
+// Helper untuk menutup loading overlay agar layar tidak mengunci
+function hideLoading() {
+    let loadingContainer = document.getElementById("loadingContainer");
+    if (loadingContainer) loadingContainer.style.display = "none";
+}
+
 // ==========================================
 // 3. FUNGSI PENCARIAN (GO-TUBE)
 // ==========================================
@@ -48,14 +54,12 @@ function lakukanPencarian() {
         AndroidBridge.searchYouTube(query);
     } else {
         alert("AndroidBridge belum terhubung dengan aplikasi Android.");
-        if (loadingContainer) loadingContainer.style.display = "none";
+        hideLoading();
     }
 }
 
-// Callback jika pencarian berhasil
 function onSearchSuccess(jsonString) {
-    let loadingContainer = document.getElementById("loadingContainer");
-    if (loadingContainer) loadingContainer.style.display = "none";
+    hideLoading();
 
     let container = document.getElementById("searchResultList");
     if (!container) return;
@@ -86,12 +90,15 @@ function onSearchSuccess(jsonString) {
         `;
 
         card.onclick = function() {
+            let loadingContainer = document.getElementById("loadingContainer");
             if (loadingContainer) loadingContainer.style.display = "block";
             let loadingText = document.getElementById("loadingText");
             if (loadingText) loadingText.innerText = "Mengekstrak audio...";
             
-            if (window.AndroidBridge) {
+            if (window.AndroidBridge && typeof window.AndroidBridge.extractYouTube === 'function') {
                 AndroidBridge.extractYouTube(video.url);
+            } else {
+                hideLoading();
             }
         };
 
@@ -99,10 +106,8 @@ function onSearchSuccess(jsonString) {
     });
 }
 
-// Callback jika pencarian gagal
 function onSearchFailed(error) {
-    let loadingContainer = document.getElementById("loadingContainer");
-    if (loadingContainer) loadingContainer.style.display = "none";
+    hideLoading();
     alert("Pencarian Gagal dari Android: " + error); 
 }
 
@@ -110,7 +115,6 @@ function onSearchFailed(error) {
 // 4. FUNGSI EKSTRAKSI LINK (PASTE URL DIRECT)
 // ==========================================
 function lakukanEkstraksiUrl() {
-    // Mencari elemen input link (sesuaikan id dengan HTML kamu jika berbeda)
     let urlInput = document.getElementById("txtUrlLink") || document.getElementById("txtUrl") || document.querySelector("input[type='text']");
     let url = urlInput ? urlInput.value.trim() : "";
 
@@ -126,26 +130,23 @@ function lakukanEkstraksiUrl() {
         AndroidBridge.extractYouTube(url);
     } else {
         alert("AndroidBridge belum terhubung.");
-        if (loadingContainer) loadingContainer.style.display = "none";
+        hideLoading();
     }
 }
 
-// Callback jika ekstraksi berhasil (Mendukung format JSON Object & String URL)
 function onExtractionSuccess(jsonString) {
-    let loadingContainer = document.getElementById("loadingContainer");
-    if (loadingContainer) loadingContainer.style.display = "none";
+    hideLoading();
 
     let data = {};
     try {
         data = typeof jsonString === 'object' ? jsonString : JSON.parse(jsonString);
     } catch (e) {
-        // Fallback jika Android hanya mengirim string URL audio mentah
         data = {
             audioUrl: jsonString,
             videoUrl: "",
             title: "YouTube Audio",
             uploader: "GoTube",
-            thumbnail: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150"
+            thumbnail: ""
         };
     }
 
@@ -166,7 +167,7 @@ function onExtractionSuccess(jsonString) {
     let metaCard = document.getElementById("metaCard");
     if (metaCard) metaCard.style.display = "flex";
 
-    // Pindah ke tab Audio Player (Tab ke-2)
+    // Pindah ke tab Audio Player
     let tabBtns = document.querySelectorAll('.tab-btn');
     if (tabBtns.length > 1) {
         switchTab('audioTab', tabBtns[1]);
@@ -178,10 +179,8 @@ function onExtractionSuccess(jsonString) {
     }
 }
 
-// Callback jika ekstraksi gagal
 function onExtractionFailed(error) {
-    let loadingContainer = document.getElementById("loadingContainer");
-    if (loadingContainer) loadingContainer.style.display = "none";
+    hideLoading();
     alert("Ekstraksi Gagal dari Android: " + error);
 }
 
