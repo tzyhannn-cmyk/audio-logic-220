@@ -6,6 +6,8 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -14,6 +16,8 @@ import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -43,6 +47,8 @@ class MainActivity : AppCompatActivity() {
         initNewPipeExtractor()
         initMediaController()
 
+        WebView.setWebContentsDebuggingEnabled(true)
+
         webView = WebView(this)
         setContentView(webView)
 
@@ -56,11 +62,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webViewClient = WebViewClient()
-        webView.webChromeClient = WebChromeClient()
+        
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                Log.d("WebViewJS", "${consoleMessage.message()} -- Line ${consoleMessage.lineNumber()} of ${consoleMessage.sourceId()}")
+                return true
+            }
+        }
 
-        webView.addJavascriptInterface(AndroidBridge(webView), "AndroidBridge")
+        webView.addJavascriptInterface(AndroidBridge(webView, ::getMediaController), "AndroidBridge")
         webView.loadUrl("file:///android_asset/index.html")
     }
+
+    private fun getMediaController(): MediaController? = mediaController
 
     private fun initNewPipeExtractor() {
         try {
@@ -77,17 +91,6 @@ class MainActivity : AppCompatActivity() {
             mediaController = controllerFuture?.get()
         }, ContextCompat.getMainExecutor(this))
     }
-
-    private fun getFileName(uri: Uri): String {
-        var result = "Lagu Lokal"
-        contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                if (index != -1) result = cursor.getString(index)
-            }
-        }
-        return result
-    }
 }
 
 class AppDownloader : Downloader() {
@@ -95,6 +98,7 @@ class AppDownloader : Downloader() {
         val url = URL(request.url())
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = request.httpMethod()
+        connection.instanceFollowRedirects = true
         
         connection.setRequestProperty(
             "User-Agent",
@@ -108,26 +112,45 @@ class AppDownloader : Downloader() {
         val responseCode = connection.responseCode
         val responseMessage = connection.responseMessage ?: ""
         val stream = if (responseCode in 200..299) connection.inputStream else connection.errorStream
-        val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: ""
+
+        val encoding = connection.contentEncoding
+        val inputStream = if ("gzip".equals(encoding, ignoreCase = true) && stream != null) {
+            java.util.zip.GZIPInputStream(stream)
+        } else {
+            stream
+        }
+
+        val responseBody = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
 
         return Response(responseCode, responseMessage, connection.headerFields, responseBody, request.url())
     }
 }
 
-class AndroidBridge(private val webView: WebView) {
+class AndroidBridge(
+    private val webView: WebView,
+    private val getController: () -> MediaController?
+) {
 
     private fun sendJsResponse(functionName: String, data: String) {
         Handler(Looper.getMainLooper()).post {
-            val safeData = JSONObject.quote(data)
+            val trimmedData = data.trim()
+            val isJsonFormat = trimmedData.startsWith("{") || trimmedData.startsWith("[")
+            val safeData = if (isJsonFormat) trimmedData else JSONObject.quote(data)
+
             val script = """
                 (function() {
-                    if (typeof window['$functionName'] === 'function') {
-                        window['$functionName']($safeData);
-                    } else {
-                        alert("Fungsi JavaScript '$functionName' belum ada di script.js!\n\nLink Audio: " + $safeData);
+                    try {
+                        if (typeof window['$functionName'] === 'function') {
+                            window['$functionName']($safeData);
+                        } else {
+                            console.warn("Fungsi JS '$functionName' tidak ditemukan!");
+                        }
+                    } catch (err) {
+                        console.error("Error eksekusi JS $functionName:", err);
                     }
                 })();
             """.trimIndent()
+            
             webView.evaluateJavascript(script, null)
         }
     }
@@ -138,15 +161,15 @@ class AndroidBridge(private val webView: WebView) {
         }
     }
 
-    // Fungsi pembantu untuk membersihkan URL YouTube agar tidak error
-    private fun cleanYouTubeUrl(url: String): String {
+    private fun cleanYouTubeUrl(rawUrl: String): String {
+        val url = rawUrl.trim()
         return when {
             url.contains("youtu.be/") -> {
-                val id = url.substringAfter("youtu.be/").substringBefore("?").substringBefore("&")
+                val id = url.substringAfter("youtu.be/").substringBefore("?").substringBefore("&").trim()
                 "https://www.youtube.com/watch?v=$id"
             }
             url.contains("watch?v=") -> {
-                val id = url.substringAfter("watch?v=").substringBefore("&")
+                val id = url.substringAfter("watch?v=").substringBefore("&").trim()
                 "https://www.youtube.com/watch?v=$id"
             }
             else -> url
@@ -170,7 +193,6 @@ class AndroidBridge(private val webView: WebView) {
                         obj.put("url", item.url)
                         obj.put("uploader", item.uploaderName)
                         obj.put("duration", item.duration)
-                        // Mengambil URL thumbnail pertama dari list thumbnails
                         obj.put("thumbnail", item.thumbnails?.firstOrNull()?.url ?: "")
                         jsonArray.put(obj)
                     }
@@ -190,7 +212,6 @@ class AndroidBridge(private val webView: WebView) {
     fun extractYouTube(rawUrl: String) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Clean URL terlebih dahulu
                 val cleanUrl = cleanYouTubeUrl(rawUrl)
                 
                 val streamExtractor = ServiceList.YouTube.getStreamExtractor(cleanUrl)
@@ -203,7 +224,14 @@ class AndroidBridge(private val webView: WebView) {
                 val audioUrl = audioStream?.url ?: ""
 
                 if (audioUrl.isNotEmpty()) {
-                    sendJsResponse("onExtractionSuccess", audioUrl)
+                    // Mengirim Objek JSON Lengkap (Audio URL, Judul, Uploader, Thumbnail)
+                    val jsonResult = JSONObject().apply {
+                        put("audioUrl", audioUrl)
+                        put("title", streamExtractor.name ?: "YouTube Audio")
+                        put("uploader", streamExtractor.uploaderName ?: "GoTube")
+                        put("thumbnail", streamExtractor.thumbnails?.firstOrNull()?.url ?: "")
+                    }
+                    sendJsResponse("onExtractionSuccess", jsonResult.toString())
                 } else {
                     val errorMsg = "Audio stream tidak ditemukan dari link tersebut"
                     showToast(errorMsg)
@@ -213,6 +241,42 @@ class AndroidBridge(private val webView: WebView) {
                 val errorMsg = e.localizedMessage ?: "Ekstraksi gagal. Pastikan link YouTube valid."
                 showToast("Ekstraksi Gagal: $errorMsg")
                 sendJsResponse("onExtractionFailed", errorMsg)
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun playAudioNative(url: String, title: String, artist: String) {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val controller = getController()
+                if (controller != null) {
+                    val mediaItem = MediaItem.Builder()
+                        .setUri(url)
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle(title)
+                                .setArtist(artist)
+                                .build()
+                        )
+                        .build()
+                    controller.setMediaItem(mediaItem)
+                    controller.prepare()
+                    controller.play()
+                }
+            } catch (e: Exception) {
+                Log.e("AndroidBridge", "Gagal memutar audio native: ${e.message}")
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun pauseAudioNative() {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                getController()?.pause()
+            } catch (e: Exception) {
+                Log.e("AndroidBridge", "Gagal pause audio native: ${e.message}")
             }
         }
     }
