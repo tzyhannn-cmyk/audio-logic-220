@@ -20,12 +20,14 @@ import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
+import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -88,14 +90,12 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-// Downloader dengan Header Browser agar tidak diblokir YouTube
 class AppDownloader : Downloader() {
     override fun execute(request: Request): Response {
         val url = URL(request.url())
         val connection = url.openConnection() as HttpURLConnection
         connection.requestMethod = request.httpMethod()
         
-        // Menambahkan User-Agent Chrome agar dikenali sebagai browser resmi
         connection.setRequestProperty(
             "User-Agent",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -116,16 +116,15 @@ class AppDownloader : Downloader() {
 
 class AndroidBridge(private val webView: WebView) {
 
-    // Mengirim respon ke JavaScript dengan format JSON yang aman (bebas error string/karakter)
     private fun sendJsResponse(functionName: String, data: String) {
         Handler(Looper.getMainLooper()).post {
             val safeData = JSONObject.quote(data)
             val script = """
                 (function() {
-                    if (typeof $functionName === 'function') {
-                        $functionName($safeData);
+                    if (typeof window['$functionName'] === 'function') {
+                        window['$functionName']($safeData);
                     } else {
-                        alert("$functionName: " + $safeData);
+                        alert("Fungsi JavaScript '$functionName' belum ada di script.js!\n\nLink Audio: " + $safeData);
                     }
                 })();
             """.trimIndent()
@@ -133,10 +132,24 @@ class AndroidBridge(private val webView: WebView) {
         }
     }
 
-    // Menampilkan Notifikasi Pop-up Toast di Layar HP jika terjadi masalah
     private fun showToast(message: String) {
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(webView.context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    // Fungsi pembantu untuk membersihkan URL YouTube agar tidak error
+    private fun cleanYouTubeUrl(url: String): String {
+        return when {
+            url.contains("youtu.be/") -> {
+                val id = url.substringAfter("youtu.be/").substringBefore("?").substringBefore("&")
+                "https://www.youtube.com/watch?v=$id"
+            }
+            url.contains("watch?v=") -> {
+                val id = url.substringAfter("watch?v=").substringBefore("&")
+                "https://www.youtube.com/watch?v=$id"
+            }
+            else -> url
         }
     }
 
@@ -147,7 +160,23 @@ class AndroidBridge(private val webView: WebView) {
                 val searchExtractor = ServiceList.YouTube.getSearchExtractor(query)
                 searchExtractor.fetchPage()
 
-                sendJsResponse("onSearchSuccess", query)
+                val jsonArray = JSONArray()
+                val items = searchExtractor.initialPage.items
+                
+                for (item in items) {
+                    if (item is StreamInfoItem) {
+                        val obj = JSONObject()
+                        obj.put("title", item.name)
+                        obj.put("url", item.url)
+                        obj.put("uploader", item.uploaderName)
+                        obj.put("duration", item.duration)
+                        obj.put("thumbnail", item.thumbnailUrl)
+                        jsonArray.put(obj)
+                    }
+                }
+
+                sendJsResponse("onSearchSuccess", jsonArray.toString())
+
             } catch (e: Exception) {
                 val errorMsg = e.localizedMessage ?: "Pencarian gagal / Masalah koneksi"
                 showToast("Pencarian Gagal: $errorMsg")
@@ -157,23 +186,30 @@ class AndroidBridge(private val webView: WebView) {
     }
 
     @JavascriptInterface
-    fun extractYouTube(url: String) {
+    fun extractYouTube(rawUrl: String) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val streamExtractor = ServiceList.YouTube.getStreamExtractor(url)
+                // Clean URL terlebih dahulu
+                val cleanUrl = cleanYouTubeUrl(rawUrl)
+                
+                val streamExtractor = ServiceList.YouTube.getStreamExtractor(cleanUrl)
                 streamExtractor.fetchPage()
 
-                val audioUrl = streamExtractor.audioStreams.firstOrNull()?.url ?: ""
+                val audioStream = streamExtractor.audioStreams
+                    .sortedByDescending { it.averageBitrate }
+                    .firstOrNull()
+
+                val audioUrl = audioStream?.url ?: ""
 
                 if (audioUrl.isNotEmpty()) {
                     sendJsResponse("onExtractionSuccess", audioUrl)
                 } else {
-                    val errorMsg = "Audio stream tidak ditemukan"
+                    val errorMsg = "Audio stream tidak ditemukan dari link tersebut"
                     showToast(errorMsg)
                     sendJsResponse("onExtractionFailed", errorMsg)
                 }
             } catch (e: Exception) {
-                val errorMsg = e.localizedMessage ?: "Ekstraksi gagal / Diblokir YouTube"
+                val errorMsg = e.localizedMessage ?: "Ekstraksi gagal. Pastikan link YouTube valid."
                 showToast("Ekstraksi Gagal: $errorMsg")
                 sendJsResponse("onExtractionFailed", errorMsg)
             }
