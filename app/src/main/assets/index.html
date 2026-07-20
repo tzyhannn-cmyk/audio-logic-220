@@ -120,7 +120,7 @@
                     </h1>
                 </div>
 
-                <!-- Akses File Lokal (dari Kode 1) -->
+                <!-- Akses File Lokal -->
                 <button class="bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-bold px-3.5 py-2 rounded-xl border border-slate-700 transition flex items-center gap-2 shadow-sm" onclick="if(window.AndroidBridge) { AndroidBridge.pickLocalFile(); } else { document.getElementById('audioFile').click(); }">
                     📁 Buka File Lokal
                 </button>
@@ -176,10 +176,10 @@
                         <span id="durationDisplay" class="text-[10px] font-mono text-slate-500 w-8">0:00</span>
                     </div>
                 </div>
-                <audio id="realAudio" class="hidden"></audio>
+                <audio id="realAudio" class="hidden" crossorigin="anonymous"></audio>
             </div>
 
-            <!-- STATUS & INDIKATOR META (Dari Kode 1) -->
+            <!-- STATUS & INDIKATOR META -->
             <div id="loadingContainer" class="bg-slate-950/80 p-3 rounded-xl border border-slate-800/80 flex items-center gap-3" style="display: none;">
                 <div class="spinner"></div>
                 <p id="loadingText" class="text-xs text-cyan-400 font-mono">Menghubungkan ke server...</p>
@@ -205,7 +205,7 @@
 
         <!-- ISI KONTEN TAB -->
         
-        <!-- TAB 1: DSP CONTROLLER & MATRIX (Dari Kode 2) -->
+        <!-- TAB 1: DSP CONTROLLER & MATRIX -->
         <div id="dspTab" class="tab-content space-y-4">
             
             <!-- ACOUSTIC COMMAND CENTER -->
@@ -542,7 +542,7 @@
             </div>
         </div>
 
-        <!-- TAB 2: PENCARIAN GOTUBE (Dari Kode 1) -->
+        <!-- TAB 2: PENCARIAN GOTUBE -->
         <div id="searchTab" class="tab-content bg-slate-900/40 rounded-2xl border border-slate-800/60 p-4 shadow-xl space-y-4" style="display: none;">
             <div class="flex gap-2">
                 <input type="text" id="txtCari" placeholder="Ketik judul lagu atau penyanyi..." class="bg-slate-950 border border-slate-800 text-xs text-slate-300 px-3 py-2 rounded-xl focus:outline-none focus:border-cyan-500 flex-1 font-mono">
@@ -553,14 +553,14 @@
             </div>
         </div>
 
-        <!-- TAB 3: VIDEO PLAYER (Dari Kode 1) -->
+        <!-- TAB 3: VIDEO PLAYER -->
         <div id="videoTab" class="tab-content bg-slate-900/40 rounded-2xl border border-slate-800/60 p-4 shadow-xl space-y-4" style="display: none;">
             <div class="aspect-video bg-black rounded-xl overflow-hidden border border-slate-800">
                 <video id="videoPlayer" controls class="w-full h-full"></video>
             </div>
         </div>
 
-        <!-- TAB 4: AUDIO NATIVE BACKGROUND (Dari Kode 1) -->
+        <!-- TAB 4: AUDIO NATIVE BACKGROUND -->
         <div id="audioTab" class="tab-content bg-slate-900/40 rounded-2xl border border-slate-800/60 p-4 shadow-xl space-y-4" style="display: none;">
             <div class="controls-native space-y-3">
                 <p class="text-slate-400 text-xs">Pemutaran Latar Belakang Aktif (Sistem Android Native)</p>
@@ -582,7 +582,7 @@
 
     <!-- JAVASCRIPT AUDIO ENGINE & SYSTEM SCRIPT -->
     <script>
-        // Global variables dari Kode 1
+        // Global variables
         let currentAudioUrl = "";
         let currentTitle = "";
         let currentArtist = "";
@@ -605,32 +605,170 @@
             }
         }
 
-        // Dummy/Placeholder Fungsi Pencarian dari Kode 1
-        function lakukanPencarian() {
-            const query = document.getElementById('txtCari').value;
-            if(!query) return alert("Ketikkan judul atau penyanyi terlebih dahulu!");
-            
-            const resultsContainer = document.getElementById('searchResultList');
-            resultsContainer.innerHTML = `<p class="text-xs text-cyan-400 text-center py-4">Mencari '${query}'...</p>`;
-            
-            if (window.AndroidBridge && typeof window.AndroidBridge.searchYouTube === 'function') {
-                window.AndroidBridge.searchYouTube(query);
+        /* --- MESIN EKSTRAKSI YOUTUBE WEB REAL-TIME & PENCARIAN --- */
+        function getYouTubeVideoId(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+
+        async function extractYouTubeWeb(url) {
+            const videoId = getYouTubeVideoId(url);
+            if (!videoId) throw new Error("URL YouTube tidak valid!");
+
+            const loadingContainer = document.getElementById('loadingContainer');
+            const loadingText = document.getElementById('loadingText');
+            const metaCard = document.getElementById('metaCard');
+            const extractBtn = document.getElementById('extractYtBtn');
+
+            if (loadingContainer) loadingContainer.style.display = 'flex';
+            if (loadingText) loadingText.innerText = "Mengekstrak audio YouTube...";
+            if (extractBtn) extractBtn.innerText = "EXTRACTING...";
+
+            let audioStreamUrl = null;
+            let title = "YouTube Audio Stream";
+            let uploader = "GoTube Channel";
+            let thumbnail = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
+
+            // Server instances
+            const pipedInstances = [
+                'https://api.piped.video',
+                'https://pipedapi.kavin.rocks',
+                'https://pipedapi.tokhmi.xyz'
+            ];
+
+            // 1. Coba Cobalt API
+            try {
+                const cobaltRes = await fetch('https://api.cobalt.tools/', {
+                    method: 'POST',
+                    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url, downloadMode: 'audio', audioFormat: 'mp3' })
+                });
+                if (cobaltRes.ok) {
+                    const cobaltData = await cobaltRes.json();
+                    if (cobaltData.url) audioStreamUrl = cobaltData.url;
+                }
+            } catch (e) {
+                console.log("Cobalt API fallback ke Piped API");
+            }
+
+            // 2. Fallback Piped API Instances
+            if (!audioStreamUrl) {
+                for (const instance of pipedInstances) {
+                    try {
+                        const res = await fetch(`${instance}/streams/${videoId}`);
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.audioStreams && data.audioStreams.length > 0) {
+                                const bestAudio = data.audioStreams.sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+                                audioStreamUrl = bestAudio.url;
+                                title = data.title || title;
+                                uploader = data.uploader || uploader;
+                                if (data.thumbnailUrl) thumbnail = data.thumbnailUrl;
+                                break;
+                            }
+                        }
+                    } catch (err) {
+                        console.warn(`Gagal dari ${instance}:`, err);
+                    }
+                }
+            }
+
+            if (loadingContainer) loadingContainer.style.display = 'none';
+            if (extractBtn) extractBtn.innerText = "EXTRACT";
+
+            if (audioStreamUrl) {
+                if (metaCard) metaCard.style.display = 'flex';
+                document.getElementById('txtJudul').innerText = title;
+                document.getElementById('txtUploader').innerText = uploader;
+                document.getElementById('imgThumbnail').src = thumbnail;
+
+                currentTitle = title;
+                currentArtist = uploader;
+
+                onAudioExtracted(audioStreamUrl);
             } else {
-                setTimeout(() => {
-                    resultsContainer.innerHTML = `
-                        <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
-                            <div>
-                                <h4 class="text-xs font-bold text-slate-200">${query} - Demo Result</h4>
-                                <p class="text-[10px] text-slate-500">GoTube Player Stream</p>
-                            </div>
-                            <button onclick="onAudioExtracted('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3')" class="bg-cyan-600 text-white text-[10px] font-bold px-3 py-1 rounded">Play DSP</button>
-                        </div>
-                    `;
-                }, 800);
+                throw new Error("Gagal mengambil stream audio. Silakan coba video/link lain.");
             }
         }
 
-        /* --- SCRIPT AUDIO ENGINE & CHART MANAGEMENT (Dari Kode 2) --- */
+        async function sendUrlToAndroid() {
+            const url = document.getElementById('ytUrlInput').value.trim();
+            if (!url) return alert('Masukkan link YouTube terlebih dahulu!');
+
+            if (window.AndroidBridge && typeof window.AndroidBridge.extractYouTubeAudio === 'function') {
+                document.getElementById('extractYtBtn').innerText = "EXTRACTING...";
+                window.AndroidBridge.extractYouTubeAudio(url);
+            } else {
+                try {
+                    await extractYouTubeWeb(url);
+                } catch (err) {
+                    if (document.getElementById('loadingContainer')) document.getElementById('loadingContainer').style.display = 'none';
+                    document.getElementById('extractYtBtn').innerText = "EXTRACT";
+                    alert("Ekstraksi Gagal: " + err.message);
+                }
+            }
+        }
+
+        async function lakukanPencarian() {
+            const query = document.getElementById('txtCari').value.trim();
+            if (!query) return alert("Ketikkan judul atau penyanyi terlebih dahulu!");
+
+            const resultsContainer = document.getElementById('searchResultList');
+            resultsContainer.innerHTML = `<p class="text-xs text-cyan-400 text-center py-4 font-mono">Mencari '${query}'...</p>`;
+
+            if (window.AndroidBridge && typeof window.AndroidBridge.searchYouTube === 'function') {
+                window.AndroidBridge.searchYouTube(query);
+            } else {
+                try {
+                    const res = await fetch(`https://api.piped.video/search?q=${encodeURIComponent(query)}&filter=music_songs`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.items && data.items.length > 0) {
+                            resultsContainer.innerHTML = '';
+                            data.items.slice(0, 10).forEach(item => {
+                                if (item.type === 'stream') {
+                                    const videoUrl = `https://www.youtube.com/watch?v=${item.url.replace('/watch?v=', '')}`;
+                                    const div = document.createElement('div');
+                                    div.className = "p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between gap-3";
+                                    div.innerHTML = `
+                                        <div class="flex items-center gap-3 overflow-hidden">
+                                            <img src="${item.thumbnail}" class="w-10 h-10 rounded-lg object-cover border border-slate-800 shrink-0">
+                                            <div class="truncate">
+                                                <h4 class="text-xs font-bold text-slate-200 truncate">${item.title}</h4>
+                                                <p class="text-[10px] text-slate-500 truncate">${item.uploaderName || 'GoTube Stream'}</p>
+                                            </div>
+                                        </div>
+                                        <button onclick="playSearchedItem('${videoUrl}')" class="bg-cyan-600 hover:bg-cyan-500 text-white text-[10px] font-bold px-3 py-1.5 rounded transition shrink-0">Play DSP</button>
+                                    `;
+                                    resultsContainer.appendChild(div);
+                                });
+                            return;
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Pencarian API Gagal:", e);
+                }
+
+                resultsContainer.innerHTML = `
+                    <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-between">
+                        <div>
+                            <h4 class="text-xs font-bold text-slate-200">${query} - Demo Stream</h4>
+                            <p class="text-[10px] text-slate-500">GoPlayer Audio Engine</p>
+                        </div>
+                        <button onclick="onAudioExtracted('https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3')" class="bg-cyan-600 text-white text-[10px] font-bold px-3 py-1 rounded">Play DSP</button>
+                    </div>
+                `;
+            }
+        }
+
+        function playSearchedItem(url) {
+            document.getElementById('ytUrlInput').value = url;
+            switchTab('dspTab', document.querySelectorAll('.tab-btn')[0]);
+            sendUrlToAndroid();
+        }
+
+        /* --- SCRIPT AUDIO ENGINE & CHART MANAGEMENT --- */
         const chartFreqs = ['20Hz', '50Hz', '100Hz', '200Hz', '500Hz', '1kHz', '2kHz', '5kHz', '10kHz', '16kHz'];
         const eqFrequencies = [25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000];
         
@@ -818,20 +956,6 @@
                 playPauseBtn.className = "bg-slate-100 hover:bg-white text-black text-[10px] font-bold px-3 py-1 rounded transition w-16 text-center";
             }
         });
-
-        /* --- FUNGSI EXTRACTOR ANDROID BRIDGE & PLAYBACK YOUTUBE --- */
-        function sendUrlToAndroid() {
-            const url = document.getElementById('ytUrlInput').value;
-            if (!url) return alert('Masukkan link YouTube terlebih dahulu!');
-
-            if (window.AndroidBridge) {
-                document.getElementById('extractYtBtn').innerText = "EXTRACTING...";
-                window.AndroidBridge.extractYouTubeAudio(url);
-            } else {
-                alert("Fitur ekstraksi berjalan melalui pencarian/simulasi web lokal.");
-                onAudioExtracted(url);
-            }
-        }
 
         function onAudioExtracted(audioUrl) {
             document.getElementById('extractYtBtn').innerText = "EXTRACT";
@@ -1197,7 +1321,6 @@
             }
         }
 
-        /* --- PENYELESAIAN FUNGSI VU METER TERPOTONG --- */
         function drawHardwareVUMeters() {
             requestAnimationFrame(drawHardwareVUMeters);
 
@@ -1258,4 +1381,3 @@
     </script>
 </body>
 </html>
-
